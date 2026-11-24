@@ -1,0 +1,13 @@
+---
+# ansible-galaxy collection install -r requirements.yml -p ./collections
+collections:
+  - name: ansible.netcommon        # network_cli / httpapi / cli_command
+  - name: cisco.ios                # cliconf/terminal IOS e IOS-XE
+  - name: cisco.nxos               # cliconf/terminal NX-OS
+  - name: fortinet.fortios         # módulos FortiOS (httpapi)
+    version: ">=2.3.0"
+  # Huawei VRP: usa o cliconf/terminal "ce" desta coleção.
+  # ATENÇÃO: community.network está depreciada e saiu do pacote "ansible" 12;
+  # continua instalável manualmente. Fixamos < 6.0.0 (versão que removeria o "ce").
+  - name: community.network
+    version: ">=5.0.0,<6.0.0"

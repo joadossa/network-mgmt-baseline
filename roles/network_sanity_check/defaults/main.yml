@@ -1,0 +1,37 @@
+---
+# Plataformas com catálogo (vars/<plataforma>.yml)
+sanity_supported_platforms: [ios, nxos, huawei_vrp]
+
+# Modo offline: lê <dir>/<inventory_hostname>.cfg em vez de conectar no equipamento
+# (útil para auditar backups do Oxidized/RANCID ou testar o catálogo).
+sanity_offline_config_dir: ""
+
+# Falhar o host (útil em pipeline/AWX) se houver FAIL/ERROR com severidade >= sanity_fail_severity
+sanity_fail_on_noncompliance: false
+sanity_fail_severity: high           # info | low | medium | high | critical
+
+# Critérios (normalmente definidos em group_vars/all/baseline.yml)
+sanity_require_local_fallback: true
+sanity_require_cmd_authorization: true
+sanity_require_accounting: true
+sanity_require_ssh_only: true
+sanity_require_explicit_deny: false
+sanity_runtime_checks: true
+
+# Nomes esperados — padrões (sobrescreva em group_vars/<plataforma>.yml)
+ios_tacacs_group: ISE-TACACS
+ios_mgmt_acl: ACL-MGMT
+ios_login_method_list: default
+ios_tacacs_source_interface: ""
+
+nxos_tacacs_group: ISE-TACACS
+nxos_tacacs_vrf: management
+nxos_tacacs_source_interface: ""
+nxos_mgmt_acl: ACL-MGMT
+
+huawei_hwtacacs_template: ISE
+huawei_mgmt_acl: "2000"
+huawei_aaa_domain: default_admin
+huawei_authen_scheme: TACACS
+huawei_author_scheme: TACACS
+huawei_acct_scheme: TACACS

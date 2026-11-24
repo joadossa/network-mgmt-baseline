@@ -1,0 +1,16 @@
+---
+ansible_connection: ansible.netcommon.network_cli
+# cliconf/terminal "ce" (community.network): trata prompts <HOST>/[HOST]
+# e executa "screen-length 0 temporary" ao abrir a sessão.
+ansible_network_os: community.network.ce
+ansible_user: "{{ vault_net_user }}"
+ansible_password: "{{ vault_net_password }}"
+
+sanity_platform: huawei_vrp
+
+huawei_hwtacacs_template: ISE         # hwtacacs-server template <nome>
+huawei_mgmt_acl: "2000"               # número ou nome da ACL usada nas user-interface vty
+huawei_aaa_domain: default_admin      # domínio usado nos logins administrativos
+huawei_authen_scheme: TACACS          # authentication-scheme <nome>
+huawei_author_scheme: TACACS          # authorization-scheme <nome>
+huawei_acct_scheme: TACACS            # accounting-scheme <nome>

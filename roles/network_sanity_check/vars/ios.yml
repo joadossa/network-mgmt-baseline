@@ -1,0 +1,221 @@
+---
+# =====================================================================
+#  Catálogo de checks — Cisco IOS / IOS-XE
+# ---------------------------------------------------------------------
+#  type:
+#    present             -> pattern precisa existir na saída
+#    absent              -> pattern NÃO pode existir
+#    any_section         -> ao menos uma seção (regex "section") contém pattern
+#    each_section        -> TODAS as seções contêm pattern (falha se não houver seção)
+#    each_section_absent -> nenhuma seção contém pattern
+#  items: lista -> o check roda uma vez por item, com placeholders:
+#    __IP__ __CIDR__ __MASK__ __WILDCARD__ __CISCO_SRC__ __HUAWEI_SRC__ __NAME__ __LABEL__
+#  Valores vindos do inventário entram via Jinja com "| regex_escape".
+# =====================================================================
+sanity_config_command: show running-config
+
+_ios_grp: "{{ ios_tacacs_group | regex_escape }}"
+_ios_acl: "{{ ios_mgmt_acl | regex_escape }}"
+_ios_login: "{{ ios_login_method_list | regex_escape }}"
+_ios_acl_section: '^(?:ip access-list (?:standard|extended) {{ _ios_acl }}$|access-list {{ _ios_acl }} )'
+
+sanity_checks:
+  # ------------------------------ TACACS+ ------------------------------
+  - id: IOS-TAC-001
+    category: TACACS
+    severity: critical
+    title: "AAA new-model habilitado"
+    type: present
+    pattern: '^aaa new-model$'
+    remediation: "aaa new-model"
+
+  - id: IOS-TAC-002
+    category: TACACS
+    severity: critical
+    title: "Servidor TACACS+ __LABEL__ configurado"
+    type: any_section
+    items: "{{ tacacs_servers }}"
+    section: '^(?:tacacs server \S+$|tacacs-server host __IP__\b)'
+    pattern: '(?:^\s+address ipv4 __IP__$|^tacacs-server host __IP__\b)'
+    remediation: |-
+      tacacs server __NAME__
+       address ipv4 __IP__
+       key <chave>
+
+  - id: IOS-TAC-003
+    category: TACACS
+    severity: high
+    title: "Servidor __LABEL__ membro do grupo {{ ios_tacacs_group }}"
+    type: any_section
+    items: "{{ tacacs_servers }}"
+    section: '^aaa group server tacacs\+ {{ _ios_grp }}$'
+    pattern: '^\s+server (?:name __NAME__|__IP__)$'
+    remediation: |-
+      aaa group server tacacs+ {{ ios_tacacs_group }}
+       server name __NAME__
+
+  - id: IOS-TAC-004
+    category: TACACS
+    severity: critical
+    title: "Login via TACACS+ ({{ ios_login_method_list }}){{ ' com fallback local' if sanity_require_local_fallback | bool else '' }}"
+    type: present
+    pattern: '^aaa authentication login {{ _ios_login }} group {{ _ios_grp }}{{ " local" if sanity_require_local_fallback | bool else "" }}\b'
+    remediation: "aaa authentication login {{ ios_login_method_list }} group {{ ios_tacacs_group }} local"
+
+  - id: IOS-TAC-005
+    category: TACACS
+    severity: high
+    title: "Autorização exec via TACACS+"
+    type: present
+    pattern: '^aaa authorization exec {{ _ios_login }} group {{ _ios_grp }}\b'
+    remediation: "aaa authorization exec {{ ios_login_method_list }} group {{ ios_tacacs_group }} local if-authenticated"
+
+  - id: IOS-TAC-006
+    category: TACACS
+    severity: medium
+    title: "Autorização de comandos (privilégio 15) via TACACS+"
+    enabled: "{{ sanity_require_cmd_authorization | bool }}"
+    type: present
+    pattern: '^aaa authorization commands 15 {{ _ios_login }} group {{ _ios_grp }}\b'
+    remediation: "aaa authorization commands 15 {{ ios_login_method_list }} group {{ ios_tacacs_group }} local if-authenticated"
+
+  - id: IOS-TAC-007
+    category: TACACS
+    severity: medium
+    title: "Accounting de sessões (exec) via TACACS+"
+    enabled: "{{ sanity_require_accounting | bool }}"
+    type: present
+    pattern: '^aaa accounting exec {{ _ios_login }} (?:start-stop|stop-only) group {{ _ios_grp }}\b'
+    remediation: "aaa accounting exec {{ ios_login_method_list }} start-stop group {{ ios_tacacs_group }}"
+
+  - id: IOS-TAC-008
+    category: TACACS
+    severity: medium
+    title: "Accounting de comandos (privilégio 15) via TACACS+"
+    enabled: "{{ sanity_require_accounting | bool }}"
+    type: present
+    pattern: '^aaa accounting commands 15 {{ _ios_login }} (?:start-stop|stop-only) group {{ _ios_grp }}\b'
+    remediation: "aaa accounting commands 15 {{ ios_login_method_list }} start-stop group {{ ios_tacacs_group }}"
+
+  - id: IOS-TAC-009
+    category: TACACS
+    severity: low
+    title: "Source-interface TACACS+ = {{ ios_tacacs_source_interface }}"
+    enabled: "{{ ios_tacacs_source_interface | length > 0 }}"
+    type: present
+    pattern: '^\s*ip tacacs source-interface {{ ios_tacacs_source_interface | regex_escape }}$'
+    remediation: "ip tacacs source-interface {{ ios_tacacs_source_interface }}"
+
+  - id: IOS-TAC-010
+    category: TACACS
+    severity: medium
+    title: "Chave TACACS+ não está em texto claro (tacacs server)"
+    type: each_section_absent
+    section: '^tacacs server \S+$'
+    pattern: '^\s+key (?:0 )?(?![67] )\S+\s*$'
+    remediation: "service password-encryption  (ou: key 6 <chave> com 'password encryption aes')"
+
+  - id: IOS-TAC-011
+    category: TACACS
+    severity: medium
+    title: "Chave TACACS+ não está em texto claro (sintaxe legada)"
+    type: absent
+    pattern: '^tacacs-server (?:host \S+ .*)?key (?:0 )?(?![67] )\S+\s*$'
+    remediation: "service password-encryption"
+
+  - id: IOS-TAC-012
+    category: TACACS
+    severity: high
+    title: "Servidores TACACS+ sem status Dead (show tacacs)"
+    enabled: "{{ sanity_runtime_checks | bool }}"
+    source: show tacacs
+    type: absent
+    flags: i
+    pattern: 'server status:\s*dead'
+    remediation: "Verificar conectividade (porta 49), chave e o NAD no ISE"
+
+  # -------------------------- ACL de gerência --------------------------
+  - id: IOS-ACL-001
+    category: ACL_MGMT
+    severity: critical
+    title: "ACL de gerência {{ ios_mgmt_acl }} existe"
+    type: present
+    pattern: "{{ _ios_acl_section }}"
+    remediation: "ip access-list standard {{ ios_mgmt_acl }}"
+
+  - id: IOS-ACL-002
+    category: ACL_MGMT
+    severity: high
+    title: "Rede de gerência __CIDR__ permitida na {{ ios_mgmt_acl }}"
+    type: any_section
+    items: "{{ mgmt_networks }}"
+    section: "{{ _ios_acl_section }}"
+    pattern: '\bpermit\s+(?:(?:ip|tcp)\s+)?__CISCO_SRC__(?:\s|$)'
+    remediation: |-
+      ip access-list standard {{ ios_mgmt_acl }}
+       permit __CISCO_SRC__
+
+  - id: IOS-ACL-003
+    category: ACL_MGMT
+    severity: critical
+    title: "ACL {{ ios_mgmt_acl }} não contém permit any"
+    type: each_section_absent
+    section: "{{ _ios_acl_section }}"
+    pattern: '\bpermit\s+(?:(?:ip|tcp)\s+)?any\b'
+    remediation: "Remover a entrada 'permit any' da {{ ios_mgmt_acl }}"
+
+  - id: IOS-ACL-004
+    category: ACL_MGMT
+    severity: low
+    title: "ACL {{ ios_mgmt_acl }} termina com deny explícito"
+    enabled: "{{ sanity_require_explicit_deny | bool }}"
+    type: any_section
+    section: "{{ _ios_acl_section }}"
+    pattern: '\bdeny\s+(?:ip\s+)?any\b'
+    remediation: |-
+      ip access-list standard {{ ios_mgmt_acl }}
+       deny any log
+
+  - id: IOS-ACL-005
+    category: ACL_MGMT
+    severity: critical
+    title: "Todas as line vty com access-class {{ ios_mgmt_acl }} in"
+    type: each_section
+    section: '^line vty \d+(?: \d+)?$'
+    pattern: '^\s+access-class {{ _ios_acl }} in(?: vrf-also)?$'
+    remediation: |-
+      line vty 0 15
+       access-class {{ ios_mgmt_acl }} in vrf-also
+
+  - id: IOS-ACL-006
+    category: ACL_MGMT
+    severity: high
+    title: "Todas as line vty aceitam somente SSH"
+    enabled: "{{ sanity_require_ssh_only | bool }}"
+    type: each_section
+    section: '^line vty \d+(?: \d+)?$'
+    pattern: '^\s+transport input ssh$'
+    remediation: |-
+      line vty 0 15
+       transport input ssh
+
+  - id: IOS-ACL-007
+    category: TACACS
+    severity: critical
+    title: "Line vty usam a method list {{ ios_login_method_list }}"
+    enabled: "{{ ios_login_method_list != 'default' }}"
+    type: each_section
+    section: '^line vty \d+(?: \d+)?$'
+    pattern: '^\s+login authentication {{ _ios_login }}$'
+    remediation: |-
+      line vty 0 15
+       login authentication {{ ios_login_method_list }}
+
+  - id: IOS-ACL-008
+    category: ACL_MGMT
+    severity: low
+    title: "SSH versão 2"
+    enabled: "{{ sanity_require_ssh_only | bool }}"
+    type: present
+    pattern: '^ip ssh version 2$'
+    remediation: "ip ssh version 2"

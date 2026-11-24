@@ -1,0 +1,12 @@
+---
+ansible_connection: ansible.netcommon.network_cli
+ansible_network_os: cisco.nxos.nxos
+ansible_user: "{{ vault_net_user }}"
+ansible_password: "{{ vault_net_password }}"
+
+sanity_platform: nxos
+
+nxos_tacacs_group: ISE-TACACS         # aaa group server tacacs+ <nome>
+nxos_tacacs_vrf: management           # use-vrf dentro do grupo (vazio = não valida)
+nxos_tacacs_source_interface: mgmt0   # vazio = não valida
+nxos_mgmt_acl: ACL-MGMT               # line vty / access-class <acl> in

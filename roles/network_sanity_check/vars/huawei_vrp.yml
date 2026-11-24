@@ -1,0 +1,268 @@
+---
+# =====================================================================
+#  Catálogo de checks — Huawei VRP (S/CE/AR/NE)
+#  Regex tolerantes a "hwtacacs-server" (V5) e "hwtacacs server" (algumas V8).
+#  VRP indenta 1 espaço por nível: " authentication-scheme X" (definição, na view aaa)
+#  é diferente de "  authentication-scheme X" (referência, dentro do domain).
+#  Formato e placeholders: ver vars/ios.yml
+# =====================================================================
+sanity_config_command: display current-configuration
+
+_hw_tpl: "{{ huawei_hwtacacs_template | regex_escape }}"
+_hw_acl: "{{ huawei_mgmt_acl | string | regex_escape }}"
+_hw_dom: "{{ huawei_aaa_domain | regex_escape }}"
+_hw_tpl_section: '^hwtacacs(?:-server| server) template {{ _hw_tpl }}$'
+_hw_acl_section: '^acl (?:number )?(?:name )?{{ _hw_acl }}(?:\s|$)'
+_hw_vty_section: '^user-interface vty \d+(?: \d+)?$'
+_hw_domain_section: '^\s*domain {{ _hw_dom }}$'
+
+sanity_checks:
+  # ------------------------------ HWTACACS ------------------------------
+  - id: HW-TAC-001
+    category: TACACS
+    severity: critical
+    title: "Template HWTACACS {{ huawei_hwtacacs_template }} existe"
+    type: present
+    pattern: "{{ _hw_tpl_section }}"
+    remediation: "hwtacacs-server template {{ huawei_hwtacacs_template }}"
+
+  - id: HW-TAC-002
+    category: TACACS
+    severity: critical
+    title: "Servidor de autenticação __LABEL__ no template"
+    type: any_section
+    items: "{{ tacacs_servers }}"
+    section: "{{ _hw_tpl_section }}"
+    pattern: '^\s+hwtacacs(?:-server| server) authentication __IP__(?:\s|$)'
+    remediation: |-
+      hwtacacs-server template {{ huawei_hwtacacs_template }}
+       hwtacacs-server authentication __IP__
+
+  - id: HW-TAC-003
+    category: TACACS
+    severity: high
+    title: "Servidor de autorização __LABEL__ no template"
+    type: any_section
+    items: "{{ tacacs_servers }}"
+    section: "{{ _hw_tpl_section }}"
+    pattern: '^\s+hwtacacs(?:-server| server) authorization __IP__(?:\s|$)'
+    remediation: |-
+      hwtacacs-server template {{ huawei_hwtacacs_template }}
+       hwtacacs-server authorization __IP__
+
+  - id: HW-TAC-004
+    category: TACACS
+    severity: medium
+    title: "Servidor de accounting __LABEL__ no template"
+    enabled: "{{ sanity_require_accounting | bool }}"
+    type: any_section
+    items: "{{ tacacs_servers }}"
+    section: "{{ _hw_tpl_section }}"
+    pattern: '^\s+hwtacacs(?:-server| server) accounting __IP__(?:\s|$)'
+    remediation: |-
+      hwtacacs-server template {{ huawei_hwtacacs_template }}
+       hwtacacs-server accounting __IP__
+
+  - id: HW-TAC-005
+    category: TACACS
+    severity: high
+    title: "Shared-key do template armazenada cifrada"
+    type: any_section
+    section: "{{ _hw_tpl_section }}"
+    pattern: '^\s+hwtacacs(?:-server| server) shared-key cipher \S+'
+    remediation: |-
+      hwtacacs-server template {{ huawei_hwtacacs_template }}
+       hwtacacs-server shared-key cipher <chave>
+
+  - id: HW-TAC-006
+    category: TACACS
+    severity: critical
+    title: "authentication-scheme {{ huawei_authen_scheme }} usa HWTACACS{{ ' com fallback local' if sanity_require_local_fallback | bool else '' }}"
+    type: any_section
+    section: '^ authentication-scheme {{ huawei_authen_scheme | regex_escape }}$'
+    pattern: '^\s+authentication-mode hwtacacs{{ " local" if sanity_require_local_fallback | bool else "(?: local)?" }}$'
+    remediation: |-
+      aaa
+       authentication-scheme {{ huawei_authen_scheme }}
+        authentication-mode hwtacacs local
+
+  - id: HW-TAC-007
+    category: TACACS
+    severity: high
+    title: "authorization-scheme {{ huawei_author_scheme }} usa HWTACACS"
+    type: any_section
+    section: '^ authorization-scheme {{ huawei_author_scheme | regex_escape }}$'
+    pattern: '^\s+authorization-mode hwtacacs\b'
+    remediation: |-
+      aaa
+       authorization-scheme {{ huawei_author_scheme }}
+        authorization-mode hwtacacs local
+
+  - id: HW-TAC-008
+    category: TACACS
+    severity: medium
+    title: "Autorização de comandos (authorization-cmd) via HWTACACS"
+    enabled: "{{ sanity_require_cmd_authorization | bool }}"
+    type: any_section
+    section: '^ authorization-scheme {{ huawei_author_scheme | regex_escape }}$'
+    pattern: '^\s+authorization-cmd \d+ hwtacacs\b'
+    remediation: |-
+      aaa
+       authorization-scheme {{ huawei_author_scheme }}
+        authorization-cmd 3 hwtacacs local
+
+  - id: HW-TAC-009
+    category: TACACS
+    severity: medium
+    title: "accounting-scheme {{ huawei_acct_scheme }} usa HWTACACS"
+    enabled: "{{ sanity_require_accounting | bool }}"
+    type: any_section
+    section: '^ accounting-scheme {{ huawei_acct_scheme | regex_escape }}$'
+    pattern: '^\s+accounting-mode hwtacacs$'
+    remediation: |-
+      aaa
+       accounting-scheme {{ huawei_acct_scheme }}
+        accounting-mode hwtacacs
+
+  - id: HW-TAC-010
+    category: TACACS
+    severity: critical
+    title: "Domínio {{ huawei_aaa_domain }} usa o template {{ huawei_hwtacacs_template }}"
+    type: any_section
+    section: "{{ _hw_domain_section }}"
+    pattern: '^\s+hwtacacs(?:-server| server) {{ _hw_tpl }}$'
+    remediation: |-
+      aaa
+       domain {{ huawei_aaa_domain }}
+        hwtacacs-server {{ huawei_hwtacacs_template }}
+
+  - id: HW-TAC-011
+    category: TACACS
+    severity: critical
+    title: "Domínio {{ huawei_aaa_domain }} usa authentication-scheme {{ huawei_authen_scheme }}"
+    type: any_section
+    section: "{{ _hw_domain_section }}"
+    pattern: '^\s+authentication-scheme {{ huawei_authen_scheme | regex_escape }}$'
+    remediation: |-
+      aaa
+       domain {{ huawei_aaa_domain }}
+        authentication-scheme {{ huawei_authen_scheme }}
+
+  - id: HW-TAC-012
+    category: TACACS
+    severity: high
+    title: "Domínio {{ huawei_aaa_domain }} usa authorization-scheme {{ huawei_author_scheme }}"
+    type: any_section
+    section: "{{ _hw_domain_section }}"
+    pattern: '^\s+authorization-scheme {{ huawei_author_scheme | regex_escape }}$'
+    remediation: |-
+      aaa
+       domain {{ huawei_aaa_domain }}
+        authorization-scheme {{ huawei_author_scheme }}
+
+  - id: HW-TAC-013
+    category: TACACS
+    severity: medium
+    title: "Domínio {{ huawei_aaa_domain }} usa accounting-scheme {{ huawei_acct_scheme }}"
+    enabled: "{{ sanity_require_accounting | bool }}"
+    type: any_section
+    section: "{{ _hw_domain_section }}"
+    pattern: '^\s+accounting-scheme {{ huawei_acct_scheme | regex_escape }}$'
+    remediation: |-
+      aaa
+       domain {{ huawei_aaa_domain }}
+        accounting-scheme {{ huawei_acct_scheme }}
+
+  - id: HW-TAC-014
+    category: TACACS
+    severity: critical
+    title: "Todas as user-interface vty com authentication-mode aaa"
+    type: each_section
+    section: "{{ _hw_vty_section }}"
+    pattern: '^\s+authentication-mode aaa$'
+    remediation: |-
+      user-interface vty 0 4
+       authentication-mode aaa
+
+  # -------------------------- ACL de gerência --------------------------
+  - id: HW-ACL-001
+    category: ACL_MGMT
+    severity: critical
+    title: "ACL de gerência {{ huawei_mgmt_acl }} existe"
+    type: present
+    pattern: "{{ _hw_acl_section }}"
+    remediation: "acl number {{ huawei_mgmt_acl }}"
+
+  - id: HW-ACL-002
+    category: ACL_MGMT
+    severity: high
+    title: "Rede de gerência __CIDR__ permitida na ACL {{ huawei_mgmt_acl }}"
+    type: any_section
+    items: "{{ mgmt_networks }}"
+    section: "{{ _hw_acl_section }}"
+    pattern: '^\s+rule \d+ permit (?:\S+ )?source __HUAWEI_SRC__(?:\s|$)'
+    remediation: |-
+      acl number {{ huawei_mgmt_acl }}
+       rule permit source __HUAWEI_SRC__
+
+  - id: HW-ACL-003
+    category: ACL_MGMT
+    severity: critical
+    title: "ACL {{ huawei_mgmt_acl }} não contém permit irrestrito"
+    type: each_section_absent
+    section: "{{ _hw_acl_section }}"
+    pattern: '^\s+rule \d+ permit(?: ip)?$|^\s+rule \d+ permit (?:\S+ )?source any\b'
+    remediation: "Remover a regra 'rule N permit' sem origem da ACL {{ huawei_mgmt_acl }}"
+
+  - id: HW-ACL-004
+    category: ACL_MGMT
+    severity: low
+    title: "ACL {{ huawei_mgmt_acl }} termina com deny explícito"
+    enabled: "{{ sanity_require_explicit_deny | bool }}"
+    type: any_section
+    section: "{{ _hw_acl_section }}"
+    pattern: '^\s+rule \d+ deny(?: ip)?(?: source any)?(?: logging)?$'
+    remediation: |-
+      acl number {{ huawei_mgmt_acl }}
+       rule 100 deny
+
+  - id: HW-ACL-005
+    category: ACL_MGMT
+    severity: critical
+    title: "Todas as user-interface vty com acl {{ huawei_mgmt_acl }} inbound"
+    type: each_section
+    section: "{{ _hw_vty_section }}"
+    pattern: '^\s+acl (?:name )?{{ _hw_acl }} inbound$'
+    remediation: |-
+      user-interface vty 0 4
+       acl {{ huawei_mgmt_acl }} inbound
+
+  - id: HW-ACL-006
+    category: ACL_MGMT
+    severity: high
+    title: "Todas as user-interface vty aceitam somente SSH"
+    enabled: "{{ sanity_require_ssh_only | bool }}"
+    type: each_section
+    section: "{{ _hw_vty_section }}"
+    pattern: '^\s+protocol inbound ssh$'
+    remediation: |-
+      user-interface vty 0 4
+       protocol inbound ssh
+
+  - id: HW-ACL-007
+    category: ACL_MGMT
+    severity: medium
+    title: "Servidor Telnet desabilitado"
+    enabled: "{{ sanity_require_ssh_only | bool }}"
+    type: absent
+    pattern: '^telnet server enable$'
+    remediation: "undo telnet server enable"
+
+  - id: HW-ACL-008
+    category: ACL_MGMT
+    severity: medium
+    title: "Servidor STelnet (SSH) habilitado"
+    enabled: "{{ sanity_require_ssh_only | bool }}"
+    type: present
+    pattern: '^stelnet server enable$'
+    remediation: "stelnet server enable"

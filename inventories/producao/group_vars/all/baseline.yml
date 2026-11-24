@@ -1,0 +1,40 @@
+---
+# =====================================================================
+#  FONTE DA VERDADE do baseline de gerência
+#  Usada tanto na VALIDAÇÃO (Cisco/Huawei) quanto na IMPLEMENTAÇÃO (Fortinet)
+# =====================================================================
+
+# Redes autorizadas a gerenciar os equipamentos (ACL de gerência / trusthosts).
+# Sempre em notação CIDR. /32 = host único.
+mgmt_networks:
+  - 10.10.0.0/16          # rede de gerência / jump servers
+  - 172.16.50.0/24        # NOC
+  - 192.168.100.10/32     # servidor Ansible / AWX
+
+# Servidores TACACS+ (ordem = primário, secundário, terciário).
+# "name" é usado na sintaxe nova do IOS-XE (tacacs server <name>).
+tacacs_servers:
+  - name: ISE-01
+    ip: 10.20.0.11
+  - name: ISE-02
+    ip: 10.20.0.12
+
+# Chave TACACS+ — vem do vault (nunca em texto claro aqui)
+tacacs_key: "{{ vault_tacacs_key }}"
+
+# Servidores Syslog (FortiGate suporta até 4: syslogd, syslogd2, 3 e 4)
+syslog_servers:
+  - ip: 10.30.0.50
+    port: 514
+  - ip: 10.30.0.51
+    port: 514
+
+# ---------------------------------------------------------------------
+#  Critérios do sanity check (podem ser sobrescritos por grupo/host)
+# ---------------------------------------------------------------------
+sanity_require_local_fallback: true       # login: TACACS+ com fallback local
+sanity_require_cmd_authorization: true    # autorização de comandos via TACACS+
+sanity_require_accounting: true           # accounting via TACACS+
+sanity_require_ssh_only: true             # VTY somente SSH / telnet desativado
+sanity_require_explicit_deny: false       # ACL termina com deny explícito
+sanity_runtime_checks: true               # checks de estado (ex.: show tacacs)

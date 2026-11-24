@@ -1,0 +1,5 @@
+backups/
+collections/
+*.retry
+__pycache__/
+inventories/*/group_vars/all/vault.yml

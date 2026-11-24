@@ -1,0 +1,16 @@
+---
+ansible_connection: ansible.netcommon.network_cli
+ansible_network_os: cisco.ios.ios
+ansible_user: "{{ vault_net_user }}"
+ansible_password: "{{ vault_net_password }}"
+ansible_become: true
+ansible_become_method: enable
+ansible_become_password: "{{ vault_enable_password }}"
+
+sanity_platform: ios
+
+# Nomes esperados na configuração
+ios_tacacs_group: ISE-TACACS          # aaa group server tacacs+ <nome>
+ios_mgmt_acl: ACL-MGMT                # ACL aplicada nas line vty (access-class)
+ios_login_method_list: default        # aaa authentication login <lista>
+ios_tacacs_source_interface: ""       # ex.: Loopback0 (vazio = não valida)

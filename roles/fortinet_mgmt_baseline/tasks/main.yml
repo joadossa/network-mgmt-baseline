@@ -1,0 +1,295 @@
+---
+# Baseline de gerência FortiGate: TACACS+ (ISE), Syslog e ACL de gerência.
+# Etapas: 1 preflight -> 2 snapshot -> 3 objetos -> 4 TACACS+ -> 5 Syslog -> 6 local-in -> 7 verificação
+# Use --check para auditar sem alterar (a verificação final mostra o estado atual).
+
+- name: "FGT 1 | pré-validações (variáveis e anti-lockout)"
+  tags: [always]
+  block:
+    - name: FGT | timestamp da execução (nome do snapshot)
+      ansible.builtin.set_fact:
+        _fgt_stamp: "{{ now(fmt='%Y%m%d-%H%M%S') }}"
+
+    - name: FGT preflight | acesso à API e redes de gerência
+      ansible.builtin.assert:
+        that:
+          - fortios_access_token is defined
+          - fortios_access_token | length > 0
+          - mgmt_networks | default([]) | length > 0
+          - mgmt_networks | netbaseline_invalid_cidrs(4) | length == 0
+        fail_msg: >-
+          Defina fortios_access_token (vault) e mgmt_networks como lista de redes IPv4 em CIDR.
+          Inválidas: {{ mgmt_networks | default([]) | netbaseline_invalid_cidrs(4) }}
+        quiet: true
+
+    - name: FGT preflight | TACACS+ (1 a 3 servidores e chave definida)
+      ansible.builtin.assert:
+        that:
+          - tacacs_servers | default([]) | length >= 1
+          - tacacs_servers | length <= 3
+          - tacacs_servers | netbaseline_server_ips | length == tacacs_servers | length
+          - tacacs_key is defined
+          - tacacs_key | string | length > 0
+        fail_msg: "FortiOS aceita até 3 servidores por objeto TACACS+ e exige a chave (vault_tacacs_key)."
+        quiet: true
+      when: fortinet_tacacs_enable | bool
+
+    - name: FGT preflight | Syslog (1 a 4 servidores)
+      ansible.builtin.assert:
+        that:
+          - syslog_servers | default([]) | length >= 1
+          - syslog_servers | length <= 4
+        fail_msg: "FortiGate suporta até 4 servidores syslog (syslogd, syslogd2, syslogd3, syslogd4)."
+        quiet: true
+      when: fortinet_syslog_enable | bool
+
+    - name: FGT preflight | limite de 10 trusthosts por administrador
+      ansible.builtin.assert:
+        that:
+          - mgmt_networks | length <= 10
+        fail_msg: "mgmt_networks tem {{ mgmt_networks | length }} redes; o FortiOS aceita no máximo 10 trusthosts por admin. Agregue as redes."
+        quiet: true
+      when:
+        - fortinet_mgmt_acl_enable | bool
+        - fortinet_trusthost_enable | bool or fortinet_trusthost_local_admins | length > 0
+
+    - name: FGT preflight | interfaces da local-in policy definidas
+      ansible.builtin.assert:
+        that:
+          - fortinet_localin_interfaces | length > 0
+        fail_msg: "Defina fortinet_localin_interfaces (ex.: ['port1']) para {{ inventory_hostname }} ou desative fortinet_localin_enable."
+        quiet: true
+      when:
+        - fortinet_mgmt_acl_enable | bool
+        - fortinet_localin_enable | bool
+
+    - name: FGT preflight | ANTI-LOCKOUT — controlador dentro das redes de gerência
+      ansible.builtin.assert:
+        that:
+          - fortinet_controller_ip | length > 0
+          - fortinet_controller_ip | netbaseline_ip_in_networks(mgmt_networks)
+        fail_msg: >-
+          fortinet_controller_ip ("{{ fortinet_controller_ip }}") vazio ou fora de mgmt_networks.
+          A local-in policy / trusthosts bloqueariam a própria automação. Abortando sem alterar nada.
+        quiet: true
+      when:
+        - fortinet_mgmt_acl_enable | bool
+        - fortinet_localin_enable | bool or fortinet_trusthost_local_admins | length > 0
+
+- name: "FGT 2 | ler configuração atual"
+  ansible.builtin.import_tasks: gather.yml
+  vars:
+    _fgt_phase: pre-change
+  tags: [always]
+
+- name: "FGT 2 | salvar snapshot pré-mudança (backups/)"
+  tags: [always]
+  block:
+    - name: FGT snapshot | criar diretório de backup
+      ansible.builtin.file:
+        path: "{{ fortinet_backup_dir }}/{{ inventory_hostname }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      check_mode: false
+
+    - name: FGT snapshot | gravar estado atual (JSON)
+      ansible.builtin.copy:
+        content: "{{ _fgt_facts | to_nice_json(indent=2, ensure_ascii=False) }}"
+        dest: "{{ fortinet_backup_dir }}/{{ inventory_hostname }}/{{ _fgt_stamp }}_pre-change.json"
+        mode: "0600"
+      delegate_to: localhost
+      check_mode: false
+
+    - name: FGT snapshot | avisar falhas de leitura da API
+      ansible.builtin.debug:
+        msg: "Seletores sem leitura (a verificação marcará ERROR): {{ _fgt_facts | fortios_fact_errors }}"
+      when: _fgt_facts | fortios_fact_errors | length > 0
+
+- name: "FGT 3 | objetos de endereço da gerência"
+  when: fortinet_mgmt_acl_enable | bool
+  tags: [acl]
+  block:
+    - name: FGT ACL | objeto de endereço por rede de gerência
+      fortinet.fortios.fortios_firewall_address:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        state: present
+        firewall_address:
+          name: "{{ item | fortios_addr_name(fortinet_mgmt_addr_prefix) }}"
+          type: ipmask
+          subnet: "{{ item | fortios_ipmask }}"
+          comment: "Ansible baseline - rede de gerencia"
+      loop: "{{ mgmt_networks }}"
+
+    - name: FGT ACL | grupo de endereços da gerência
+      fortinet.fortios.fortios_firewall_addrgrp:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        state: present
+        firewall_addrgrp:
+          name: "{{ fortinet_mgmt_addrgrp }}"
+          member: "{{ mgmt_networks | map('fortios_addr_name', fortinet_mgmt_addr_prefix) | list | netbaseline_name_list }}"
+          comment: "Ansible baseline - origens autorizadas a gerenciar o FortiGate"
+
+- name: "FGT 4 | TACACS+"
+  when: fortinet_tacacs_enable | bool
+  tags: [tacacs]
+  block:
+    - name: FGT TACACS+ | servidor(es) TACACS+ (primário/secundário/terciário)
+      fortinet.fortios.fortios_user_tacacsplus:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        state: present
+        user_tacacsplus: "{{ tacacs_servers | fortios_tacacs_payload(tacacs_key, _fgt_tacacs_opts) }}"
+      no_log: "{{ fortinet_no_log | bool }}"
+
+    - name: FGT TACACS+ | grupo de usuários remoto
+      fortinet.fortios.fortios_user_group:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        state: present
+        user_group:
+          name: "{{ fortinet_tacacs_group }}"
+          group_type: firewall
+          member:
+            - name: "{{ fortinet_tacacs_name }}"
+
+    - name: FGT TACACS+ | administrador remoto wildcard (+ trusthosts da gerência)
+      fortinet.fortios.fortios_system_admin:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        state: present
+        system_admin: "{{ _fgt_admin_base | combine(_fgt_trusthosts) }}"
+      vars:
+        _fgt_admin_base:
+          name: "{{ fortinet_tacacs_admin_name }}"
+          remote_auth: enable
+          wildcard: enable
+          remote_group: "{{ fortinet_tacacs_group }}"
+          accprofile: "{{ fortinet_tacacs_accprofile }}"
+          accprofile_override: "{{ fortinet_tacacs_accprofile_override }}"
+          vdom: "{{ fortinet_tacacs_admin_vdoms | netbaseline_name_list }}"
+
+    - name: FGT TACACS+ | accounting de comandos administrativos
+      fortinet.fortios.fortios_log_tacacsplusaccounting_setting:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        log_tacacsplusaccounting_setting: "{{ tacacs_servers | fortios_tacacs_acct_payload(tacacs_key, _fgt_tacacs_opts) }}"
+      no_log: "{{ fortinet_no_log | bool }}"
+      when: fortinet_tacacs_accounting | bool
+
+- name: "FGT 5 | Syslog (slot N recebe syslog_servers[N-1]; slots sem servidor são desativados)"
+  when: fortinet_syslog_enable | bool
+  tags: [syslog]
+  block:
+    - name: FGT Syslog | slot 1 (log syslogd setting)
+      fortinet.fortios.fortios_log_syslogd_setting:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        log_syslogd_setting: "{{ syslog_servers | fortios_syslog_payload(1, _fgt_syslog_opts) }}"
+
+    - name: FGT Syslog | slot 1 filtro de severidade
+      fortinet.fortios.fortios_log_syslogd_filter:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        log_syslogd_filter:
+          severity: "{{ fortinet_syslog_severity }}"
+
+    - name: FGT Syslog | slot 2 (log syslogd2 setting)
+      fortinet.fortios.fortios_log_syslogd2_setting:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        log_syslogd2_setting: "{{ syslog_servers | fortios_syslog_payload(2, _fgt_syslog_opts) }}"
+      when: syslog_servers | length >= 2 or fortinet_syslog_disable_unused | bool
+
+    - name: FGT Syslog | slot 2 filtro de severidade
+      fortinet.fortios.fortios_log_syslogd2_filter:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        log_syslogd2_filter:
+          severity: "{{ fortinet_syslog_severity }}"
+      when: syslog_servers | length >= 2
+
+    - name: FGT Syslog | slot 3 (log syslogd3 setting)
+      fortinet.fortios.fortios_log_syslogd3_setting:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        log_syslogd3_setting: "{{ syslog_servers | fortios_syslog_payload(3, _fgt_syslog_opts) }}"
+      when: syslog_servers | length >= 3 or fortinet_syslog_disable_unused | bool
+
+    - name: FGT Syslog | slot 3 filtro de severidade
+      fortinet.fortios.fortios_log_syslogd3_filter:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        log_syslogd3_filter:
+          severity: "{{ fortinet_syslog_severity }}"
+      when: syslog_servers | length >= 3
+
+    - name: FGT Syslog | slot 4 (log syslogd4 setting)
+      fortinet.fortios.fortios_log_syslogd4_setting:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        log_syslogd4_setting: "{{ syslog_servers | fortios_syslog_payload(4, _fgt_syslog_opts) }}"
+      when: syslog_servers | length >= 4 or fortinet_syslog_disable_unused | bool
+
+    - name: FGT Syslog | slot 4 filtro de severidade
+      fortinet.fortios.fortios_log_syslogd4_filter:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        log_syslogd4_filter:
+          severity: "{{ fortinet_syslog_severity }}"
+      when: syslog_servers | length >= 4
+
+- name: "FGT 6 | ACL de gerência: trusthosts e local-in (etapa mais sensível, por último)"
+  when: fortinet_mgmt_acl_enable | bool
+  tags: [acl]
+  block:
+    - name: FGT ACL | trusthosts em administradores locais existentes
+      fortinet.fortios.fortios_system_admin:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        state: present
+        system_admin: "{{ {'name': item} | combine(mgmt_networks | fortios_trusthosts) }}"
+      loop: "{{ fortinet_trusthost_local_admins }}"
+      # nunca cria um admin novo (sem senha) por engano: só altera os que já existem
+      when: item in (_fgt_facts | fortios_table_names('system_admin'))
+
+    - name: FGT ACL | local-in policy (accept das redes de gerência + deny das demais origens)
+      fortinet.fortios.fortios_firewall_local_in_policy:
+        vdom: "{{ fortios_vdom }}"
+        access_token: "{{ fortios_access_token }}"
+        state: present
+        firewall_local_in_policy: "{{ item }}"
+      loop: "{{ fortinet_localin_interfaces | fortios_localin_policies(_fgt_localin_opts) }}"
+      loop_control:
+        label: "{{ item.policyid }} {{ item.action }} {{ item.intf | default(item.intf_dict | default([]) | map(attribute='name') | join(',')) }}"
+      when: fortinet_localin_enable | bool
+
+- name: "FGT 7 | ler configuração pós-mudança"
+  ansible.builtin.import_tasks: gather.yml
+  vars:
+    _fgt_phase: post-change
+  tags: [always]
+
+- name: "FGT 7 | verificação do baseline"
+  tags: [always]
+  block:
+    - name: FGT verificação | comparar estado atual com o baseline
+      ansible.builtin.set_fact:
+        sanity_results: "{{ _fgt_facts | fortios_baseline_evaluate(_fgt_expected) }}"
+
+    - name: FGT verificação | não conformidades
+      ansible.builtin.debug:
+        msg: "{{ sanity_results | netbaseline_host_digest }}"
+
+    - name: FGT verificação | falhar o host se houver não conformidade bloqueante
+      ansible.builtin.fail:
+        msg: >-
+          {{ _blocking | length }} não conformidade(s) com severidade >= {{ sanity_fail_severity }}:
+          {{ _blocking | map(attribute='id') | join(', ') }}
+      vars:
+        _blocking: "{{ sanity_results | netbaseline_blocking(sanity_fail_severity) }}"
+      when:
+        - sanity_fail_on_noncompliance | bool
+        - _blocking | length > 0

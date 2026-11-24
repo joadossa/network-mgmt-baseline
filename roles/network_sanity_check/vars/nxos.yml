@@ -1,0 +1,153 @@
+---
+# =====================================================================
+#  Catálogo de checks — Cisco NX-OS (Nexus)
+#  Formato e placeholders: ver vars/ios.yml
+# =====================================================================
+sanity_config_command: show running-config
+
+_nx_grp: "{{ nxos_tacacs_group | regex_escape }}"
+_nx_acl: "{{ nxos_mgmt_acl | regex_escape }}"
+_nx_grp_section: '^aaa group server tacacs\+ {{ _nx_grp }}$'
+
+sanity_checks:
+  # ------------------------------ TACACS+ ------------------------------
+  - id: NX-TAC-001
+    category: TACACS
+    severity: critical
+    title: "feature tacacs+ habilitada"
+    type: present
+    pattern: '^feature tacacs\+$'
+    remediation: "feature tacacs+"
+
+  - id: NX-TAC-002
+    category: TACACS
+    severity: critical
+    title: "Servidor TACACS+ __LABEL__ configurado"
+    type: present
+    items: "{{ tacacs_servers }}"
+    pattern: '^tacacs-server host __IP__\b'
+    remediation: "tacacs-server host __IP__ key 7 <chave>"
+
+  - id: NX-TAC-003
+    category: TACACS
+    severity: high
+    title: "Servidor __LABEL__ membro do grupo {{ nxos_tacacs_group }}"
+    type: any_section
+    items: "{{ tacacs_servers }}"
+    section: "{{ _nx_grp_section }}"
+    pattern: '^\s+server __IP__$'
+    remediation: |-
+      aaa group server tacacs+ {{ nxos_tacacs_group }}
+        server __IP__
+
+  - id: NX-TAC-004
+    category: TACACS
+    severity: high
+    title: "Grupo {{ nxos_tacacs_group }} usa a VRF {{ nxos_tacacs_vrf }}"
+    enabled: "{{ nxos_tacacs_vrf | length > 0 }}"
+    type: any_section
+    section: "{{ _nx_grp_section }}"
+    pattern: '^\s+use-vrf {{ nxos_tacacs_vrf | regex_escape }}$'
+    remediation: |-
+      aaa group server tacacs+ {{ nxos_tacacs_group }}
+        use-vrf {{ nxos_tacacs_vrf }}
+
+  - id: NX-TAC-005
+    category: TACACS
+    severity: low
+    title: "Source-interface TACACS+ = {{ nxos_tacacs_source_interface }}"
+    enabled: "{{ nxos_tacacs_source_interface | length > 0 }}"
+    type: any_section
+    section: '^(?:aaa group server tacacs\+ {{ _nx_grp }}$|ip tacacs source-interface )'
+    pattern: '^(?:ip tacacs source-interface|\s+source-interface) {{ nxos_tacacs_source_interface | regex_escape }}$'
+    remediation: |-
+      aaa group server tacacs+ {{ nxos_tacacs_group }}
+        source-interface {{ nxos_tacacs_source_interface }}
+
+  - id: NX-TAC-006
+    category: TACACS
+    severity: critical
+    title: "Login via TACACS+ (aaa authentication login default)"
+    type: present
+    pattern: '^aaa authentication login default group {{ _nx_grp }}\b'
+    remediation: "aaa authentication login default group {{ nxos_tacacs_group }}"
+
+  - id: NX-TAC-007
+    category: TACACS
+    severity: medium
+    title: "Autorização de comandos via TACACS+"
+    enabled: "{{ sanity_require_cmd_authorization | bool }}"
+    type: present
+    pattern: '^aaa authorization commands default group {{ _nx_grp }}\b'
+    remediation: "aaa authorization commands default group {{ nxos_tacacs_group }} local"
+
+  - id: NX-TAC-008
+    category: TACACS
+    severity: medium
+    title: "Accounting via TACACS+"
+    enabled: "{{ sanity_require_accounting | bool }}"
+    type: present
+    pattern: '^aaa accounting default group {{ _nx_grp }}\b'
+    remediation: "aaa accounting default group {{ nxos_tacacs_group }}"
+
+  # -------------------------- ACL de gerência --------------------------
+  - id: NX-ACL-001
+    category: ACL_MGMT
+    severity: critical
+    title: "ACL de gerência {{ nxos_mgmt_acl }} existe"
+    type: present
+    pattern: '^ip access-list {{ _nx_acl }}$'
+    remediation: "ip access-list {{ nxos_mgmt_acl }}"
+
+  - id: NX-ACL-002
+    category: ACL_MGMT
+    severity: high
+    title: "Rede de gerência __CIDR__ permitida na {{ nxos_mgmt_acl }}"
+    type: any_section
+    items: "{{ mgmt_networks }}"
+    section: '^ip access-list {{ _nx_acl }}$'
+    pattern: '\bpermit\s+(?:ip|tcp)\s+__CIDR__\s'
+    remediation: |-
+      ip access-list {{ nxos_mgmt_acl }}
+        permit ip __CIDR__ any
+
+  - id: NX-ACL-003
+    category: ACL_MGMT
+    severity: critical
+    title: "ACL {{ nxos_mgmt_acl }} não contém permit any"
+    type: each_section_absent
+    section: '^ip access-list {{ _nx_acl }}$'
+    pattern: '\bpermit\s+(?:ip|tcp)\s+any\b'
+    remediation: "Remover a entrada 'permit ip any ...' da {{ nxos_mgmt_acl }}"
+
+  - id: NX-ACL-004
+    category: ACL_MGMT
+    severity: low
+    title: "ACL {{ nxos_mgmt_acl }} termina com deny explícito"
+    enabled: "{{ sanity_require_explicit_deny | bool }}"
+    type: any_section
+    section: '^ip access-list {{ _nx_acl }}$'
+    pattern: '\bdeny\s+ip\s+any\s+any\b'
+    remediation: |-
+      ip access-list {{ nxos_mgmt_acl }}
+        deny ip any any log
+
+  - id: NX-ACL-005
+    category: ACL_MGMT
+    severity: critical
+    title: "line vty com access-class {{ nxos_mgmt_acl }} in"
+    type: each_section
+    section: '^line vty$'
+    pattern: '^\s+access-class {{ _nx_acl }} in$'
+    remediation: |-
+      line vty
+        access-class {{ nxos_mgmt_acl }} in
+
+  - id: NX-ACL-006
+    category: ACL_MGMT
+    severity: high
+    title: "Telnet desabilitado (feature telnet ausente)"
+    enabled: "{{ sanity_require_ssh_only | bool }}"
+    type: absent
+    pattern: '^feature telnet$'
+    remediation: "no feature telnet"
