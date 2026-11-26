@@ -19,8 +19,7 @@ tacacs_servers:
   - name: ISE-02
     ip: 10.20.0.12
 
-# Chave TACACS+ — vem do vault (nunca em texto claro aqui)
-tacacs_key: "{{ vault_tacacs_key }}"
+# A chave TACACS+ (tacacs_key) fica em credenciais.yml
 
 # Servidores Syslog (FortiGate suporta até 4: syslogd, syslogd2, 3 e 4)
 syslog_servers:

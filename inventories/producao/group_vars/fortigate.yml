@@ -5,12 +5,11 @@ ansible_httpapi_use_ssl: true
 ansible_httpapi_validate_certs: false   # use true com certificado válido
 ansible_httpapi_port: 443
 
-fortios_access_token: "{{ vault_fortios_access_token }}"
 fortios_vdom: root
 
-# IP do servidor Ansible/AWX COMO O FORTIGATE O VÊ (após NAT, se houver).
-# Obrigatório quando a local-in policy está ativa: o preflight aborta se ele
-# não estiver dentro de mgmt_networks (proteção anti-lockout).
+# IP da máquina do Ansible COMO O FORTIGATE O VÊ (no WSL: o IP do Windows ou da VPN).
+# Se ele não estiver em mgmt_networks, a etapa 1 aborta antes de aplicar a
+# local-in policy (proteção anti-lockout).
 fortinet_controller_ip: 192.168.100.10
 
 # TACACS+
@@ -28,4 +27,3 @@ fortinet_syslog_severity: information
 # Interfaces onde aplicar a local-in policy (definir por host no inventário).
 # NÃO use interfaces onde roda SSL-VPN na mesma porta do HTTPS de administração.
 fortinet_localin_interfaces: []
-fortinet_trusthost_local_admins: []      # ex.: ["admin"]  — revise antes de ativar

@@ -3,8 +3,8 @@ ansible_connection: ansible.netcommon.network_cli
 # cliconf/terminal "ce" (community.network): trata prompts <HOST>/[HOST]
 # e executa "screen-length 0 temporary" ao abrir a sessão.
 ansible_network_os: community.network.ce
-ansible_user: "{{ vault_net_user }}"
-ansible_password: "{{ vault_net_password }}"
+ansible_user: "{{ net_user }}"
+ansible_password: "{{ net_password }}"
 
 sanity_platform: huawei_vrp
 

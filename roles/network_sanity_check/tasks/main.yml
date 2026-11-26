@@ -4,72 +4,33 @@
 - name: Sanity | validar variáveis de entrada
   ansible.builtin.assert:
     that:
-      - sanity_platform is defined
-      - sanity_platform in sanity_supported_platforms
-      - mgmt_networks | default([]) | length > 0
+      - sanity_platform in ['ios', 'nxos', 'huawei_vrp']
       - mgmt_networks | netbaseline_invalid_cidrs(4) | length == 0
-      - tacacs_servers | default([]) | length > 0
       - tacacs_servers | netbaseline_server_ips | length == tacacs_servers | length
     fail_msg: >-
-      Variáveis inválidas para {{ inventory_hostname }}: confira sanity_platform
-      ({{ sanity_platform | default('indefinido') }}), mgmt_networks (CIDR IPv4) e
-      tacacs_servers (lista com "ip") em group_vars/all/baseline.yml.
+      Variáveis inválidas para {{ inventory_hostname }}: confira sanity_platform,
+      mgmt_networks (CIDR IPv4) e tacacs_servers (lista com "ip") em group_vars/all/baseline.yml.
     quiet: true
 
-- name: "Sanity | carregar catálogo de checks ({{ sanity_platform }})"
+- name: "Sanity | carregar regras da plataforma ({{ sanity_platform }})"
   ansible.builtin.include_vars:
     file: "{{ sanity_platform }}.yml"
 
-- name: Sanity | montar lista de comandos
-  ansible.builtin.set_fact:
-    _sanity_offline: "{{ sanity_offline_config_dir | default('') | length > 0 }}"
-    _sanity_commands: "{{ sanity_checks | netbaseline_sources(sanity_config_command) }}"
-
-# ---------------------------------------------------------------- online
 - name: Sanity | coletar saídas do equipamento
   ansible.netcommon.cli_command:
     command: "{{ item }}"
-  loop: "{{ _sanity_commands }}"
+  loop: "{{ sanity_checks | netbaseline_sources(sanity_config_command) }}"
   register: _sanity_raw
   changed_when: false
   failed_when: false
-  ignore_unreachable: true
   check_mode: false
-  when: not (_sanity_offline | bool)
 
-- name: Sanity | consolidar saídas
+- name: Sanity | avaliar regras
   ansible.builtin.set_fact:
-    sanity_outputs: "{{ _sanity_raw.results | netbaseline_collect_outputs }}"
-  when: not (_sanity_offline | bool)
-
-# --------------------------------------------------------------- offline
-- name: Sanity | carregar configuração salva (modo offline)
-  ansible.builtin.set_fact:
-    sanity_outputs: "{{ {sanity_config_command: _offline_entry} }}"
-  vars:
-    _offline_file: "{{ sanity_offline_config_dir }}/{{ inventory_hostname }}.cfg"
-    _offline_entry: >-
-      {{ {'ok': true, 'stdout': lookup('ansible.builtin.file', _offline_file), 'msg': ''}
-         if _offline_file is file else
-         {'ok': false, 'stdout': '', 'msg': 'arquivo não encontrado: ' ~ _offline_file} }}
-  when: _sanity_offline | bool
-
-# ------------------------------------------------------------- avaliação
-- name: Sanity | avaliar catálogo
-  ansible.builtin.set_fact:
-    sanity_results: "{{ sanity_outputs | netbaseline_evaluate(sanity_checks, sanity_config_command) }}"
+    sanity_results: >-
+      {{ _sanity_raw.results | netbaseline_collect_outputs
+         | netbaseline_evaluate(sanity_checks, sanity_config_command) }}
 
 - name: Sanity | não conformidades do equipamento
   ansible.builtin.debug:
     msg: "{{ sanity_results | netbaseline_host_digest }}"
-
-- name: Sanity | falhar o host se houver não conformidade bloqueante
-  ansible.builtin.fail:
-    msg: >-
-      {{ _blocking | length }} não conformidade(s) com severidade >= {{ sanity_fail_severity }}:
-      {{ _blocking | map(attribute='id') | join(', ') }}
-  vars:
-    _blocking: "{{ sanity_results | netbaseline_blocking(sanity_fail_severity) }}"
-  when:
-    - sanity_fail_on_noncompliance | bool
-    - _blocking | length > 0

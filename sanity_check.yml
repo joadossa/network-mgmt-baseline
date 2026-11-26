@@ -3,9 +3,8 @@
 #  SANITY CHECK (somente leitura) — ACL de gerência + TACACS+
 #  Cisco IOS / IOS-XE / NX-OS e Huawei VRP
 #
-#  ansible-playbook sanity_check.yml --ask-vault-pass
+#  ansible-playbook sanity_check.yml
 #  ansible-playbook sanity_check.yml -l cisco_ios
-#  ansible-playbook sanity_check.yml -e sanity_fail_on_noncompliance=true   # pipeline/AWX
 # =====================================================================
 - name: Sanity check | ACL de gerência e TACACS+
   hosts: sanity_targets

@@ -5,10 +5,11 @@ Automação Ansible do **plano de gerência** dos equipamentos de rede:
 | Playbook | Plataformas | O que faz |
 |---|---|---|
 | `sanity_check.yml` | Cisco IOS / IOS-XE / NX-OS, Huawei VRP | **Valida** (só leitura) ACL de gerência e TACACS+ |
-| `fortinet_baseline.yml` | FortiGate | **Implementa** TACACS+, Syslog e ACL de gerência e confere o resultado |
+| `fortinet_baseline.yml` | FortiGate | **Implementa** TACACS+, Syslog e ACL de gerência |
 
-O resultado aparece na saída do Ansible: cada equipamento lista as não conformidades com
-severidade, detalhe e **remediação sugerida** (comandos).
+Na validação, cada equipamento lista na saída do Ansible as não conformidades com severidade,
+detalhe e **remediação sugerida** (comandos). Versão para **lab**: sem criptografia, sem backup e
+sem verificação pós-mudança.
 
 ## Estrutura
 
@@ -20,10 +21,10 @@ fortinet_baseline.yml             # playbook de implementação (FortiGate)
 inventories/producao/
   hosts.yml                       # equipamentos (um exemplo por plataforma)
   group_vars/all/baseline.yml     # FONTE DA VERDADE: redes de gerência, TACACS+, Syslog, critérios
-  group_vars/all/vault.yml        # senhas e chaves (criar a partir do .example e criptografar)
+  group_vars/all/credenciais.yml  # senhas e chaves (criar a partir do .example; fora do Git)
   group_vars/<plataforma>.yml     # conexão + nomes esperados (grupo AAA, ACL, template HWTACACS...)
 roles/network_sanity_check/       # validação: tasks + regras por fabricante (vars/*.yml)
-roles/fortinet_mgmt_baseline/     # implementação FortiGate: tasks/main.yml (etapas 1 a 7)
+roles/fortinet_mgmt_baseline/     # implementação FortiGate: tasks/main.yml (etapas 1 a 5)
 filter_plugins/netbaseline.py     # lógica de avaliação e helpers FortiOS (não precisa editar)
 ```
 
@@ -32,11 +33,11 @@ filter_plugins/netbaseline.py     # lógica de avaliação e helpers FortiOS (n�
 ```bash
 python3 -m pip install ansible-core ansible-pylibssh
 ansible-galaxy collection install -r requirements.yml -p ./collections
-cp inventories/producao/group_vars/all/vault.yml.example inventories/producao/group_vars/all/vault.yml
-ansible-vault encrypt inventories/producao/group_vars/all/vault.yml
+cp inventories/producao/group_vars/all/credenciais.yml.example inventories/producao/group_vars/all/credenciais.yml
 ```
 
 - ansible-core **2.16+**.
+- `credenciais.yml` é texto simples e está no `.gitignore`: as senhas ficam só na sua máquina.
 - FortiGate: um **REST API Admin** com token (System > Administrators).
 - Cisco/Huawei: usuário SSH que possa rodar `show running-config` / `display current-configuration`.
 - Projeto numa pasta do Windows usada pelo WSL (`/mnt/c/...`): rode
@@ -57,7 +58,6 @@ mgmt_networks:                    # IPv4 em CIDR (/32 = host)
 tacacs_servers:                   # ordem = primário, secundário, terciário
   - { name: ISE-01, ip: 10.20.0.11 }
   - { name: ISE-02, ip: 10.20.0.12 }
-tacacs_key: "{{ vault_tacacs_key }}"
 syslog_servers:                   # FortiGate: até 4
   - { ip: 10.30.0.50, port: 514 }
 ```
@@ -70,19 +70,13 @@ Critérios da validação (`true/false`): `sanity_require_local_fallback`,
 
 ```bash
 # Validação Cisco/Huawei (só leitura)
-ansible-playbook sanity_check.yml --ask-vault-pass
-ansible-playbook sanity_check.yml -l huawei_vrp --ask-vault-pass
+ansible-playbook sanity_check.yml
+ansible-playbook sanity_check.yml -l huawei_vrp
 
-# FortiGate: comece SEMPRE pelo dry-run (não altera; mostra o que mudaria e a conformidade atual)
-ansible-playbook fortinet_baseline.yml --check --diff --ask-vault-pass
-ansible-playbook fortinet_baseline.yml --ask-vault-pass                 # aplica, 1 FortiGate por vez
-ansible-playbook fortinet_baseline.yml --tags syslog --ask-vault-pass   # só uma parte (tacacs | syslog | acl)
-
-# AWX / pipeline: falhar o host se houver achado com severidade >= high
-ansible-playbook sanity_check.yml -e sanity_fail_on_noncompliance=true -e sanity_fail_severity=high
-
-# Validar backups de configuração sem conectar: <dir>/<inventory_hostname>.cfg
-ansible-playbook sanity_check.yml -e sanity_offline_config_dir=/caminho/dos/backups
+# FortiGate
+ansible-playbook fortinet_baseline.yml --check --diff     # só mostra o que mudaria
+ansible-playbook fortinet_baseline.yml                    # aplica
+ansible-playbook fortinet_baseline.yml --tags syslog      # só uma parte (tacacs | syslog | acl)
 ```
 
 Saída por equipamento:
@@ -93,18 +87,14 @@ Saída por equipamento:
 
 ## FortiGate: etapas (`roles/fortinet_mgmt_baseline/tasks/main.yml`)
 
-1. **Preflight**: valida as variáveis e os limites (3 servidores TACACS+, 4 syslog, 10 trusthosts).
-   **Anti-lockout**: aborta sem mexer em nada se `fortinet_controller_ip` não estiver em `mgmt_networks`.
-2. **Snapshot**: salva o estado atual em `backups/<host>/<data>_pre-change.json`.
-3. **Objetos**: `firewall address` `MGMT_<rede>_<prefixo>` + `addrgrp` `GRP-MGMT-ACCESS`.
-4. **TACACS+**: `user tacacs+`, `user group`, `system admin` wildcard (remote-auth, accprofile,
-   trusthosts) e `log tacacs+accounting setting`.
-5. **Syslog**: `log syslogd[2-4] setting` + filtro de severidade; slots sem servidor desativados.
-6. **Local-in** por interface: accept de `GRP-MGMT-ACCESS` + deny das demais origens
+1. **Anti-lockout**: aborta sem mexer em nada se `fortinet_controller_ip` (o IP com que o
+   FortiGate vê o Ansible) não estiver em `mgmt_networks`.
+2. **Objetos**: `firewall address` `MGMT_<rede>_<prefixo>` + `addrgrp` `GRP-MGMT-ACCESS`.
+3. **TACACS+**: `user tacacs+` (até 3 servidores), `user group`, `system admin` wildcard
+   (remote-auth, accprofile, trusthosts) e `log tacacs+accounting setting`.
+4. **Syslog**: `log syslogd[2-4] setting` + filtro de severidade; slots sem servidor desativados.
+5. **Local-in** por interface: accept de `GRP-MGMT-ACCESS` + deny das demais origens
    (HTTPS/SSH/PING). É a etapa mais sensível, por isso fica por último.
-7. **Verificação** pela API (checks `FGT-TAC-*`, `FGT-LOG-*`, `FGT-ACL-*`).
-
-Um FortiGate por vez (`serial: 1`); chaves com `no_log`.
 
 **Atenção:**
 - Não aplique a local-in em interface onde a **SSL-VPN** usa a mesma porta do HTTPS de administração.
@@ -206,4 +196,4 @@ __HUAWEI_SRC__ __NAME__ __LABEL__`.
 | HW-ACL-008 | ACL_MGMT | Média | Servidor STelnet (SSH) habilitado |
 
 **Limites:** os regex cobrem as sintaxes mais comuns de IOS-XE 16/17, IOS 15, NX-OS 9/10 e
-VRP V200. Antes de usar em produção, valide com backups reais do parque (modo offline).
+VRP V200. Se aparecer falso positivo no seu lab, ajuste a regra em `vars/<plataforma>.yml`.

@@ -1,8 +1,8 @@
 ---
 ansible_connection: ansible.netcommon.network_cli
 ansible_network_os: cisco.nxos.nxos
-ansible_user: "{{ vault_net_user }}"
-ansible_password: "{{ vault_net_password }}"
+ansible_user: "{{ net_user }}"
+ansible_password: "{{ net_password }}"
 
 sanity_platform: nxos
 

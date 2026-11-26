@@ -1,0 +1,15 @@
+---
+# Copie para credenciais.yml e preencha (sem criptografia):
+#   cp credenciais.yml.example credenciais.yml
+# O credenciais.yml está no .gitignore: fica só na sua máquina, nunca vai para o GitHub.
+
+# Usuário SSH dos equipamentos (Cisco / Huawei)
+net_user: "svc_ansible"
+net_password: "TROCAR"
+enable_password: "TROCAR"          # IOS enable (se o usuário não entrar direto em priv 15)
+
+# Chave compartilhada TACACS+ (a mesma configurada no ISE)
+tacacs_key: "TROCAR"
+
+# Token da API REST do FortiGate (System > Administrators > REST API Admin)
+fortios_access_token: "TROCAR"

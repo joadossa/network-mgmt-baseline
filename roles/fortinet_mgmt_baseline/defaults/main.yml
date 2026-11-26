@@ -1,11 +1,7 @@
 ---
 # ------------------------------------------------------------------ geral
 fortios_vdom: root
-fortinet_no_log: true                     # esconde chaves TACACS+ na saída
-fortinet_backup_dir: "{{ playbook_dir }}/backups"
-fortinet_controller_ip: ""                # IP do Ansible/AWX visto pelo FortiGate (anti-lockout)
-sanity_fail_on_noncompliance: false       # falhar o host se a verificação pós-mudança achar FAIL/ERROR
-sanity_fail_severity: high                # ... com severidade >= esta (com serial: 1, interrompe o rollout)
+fortinet_controller_ip: ""                # IP do Ansible visto pelo FortiGate (anti-lockout)
 
 # ---------------------------------------------------------------- TACACS+
 fortinet_tacacs_enable: true
@@ -38,9 +34,8 @@ fortinet_mgmt_acl_enable: true
 fortinet_mgmt_addr_prefix: "MGMT_"        # nome dos objetos: MGMT_10.10.0.0_16
 fortinet_mgmt_addrgrp: GRP-MGMT-ACCESS
 fortinet_trusthost_enable: true           # trusthosts no admin TACACS+ (wildcard)
-fortinet_trusthost_local_admins: []       # admins LOCAIS que também recebem trusthosts (ex.: ["admin"])
 fortinet_localin_enable: true             # local-in policy: permite mgmt_networks e bloqueia o resto
-fortinet_localin_interfaces: []           # obrigatório se localin ativo (ex.: ["port1", "mgmt"])
+fortinet_localin_interfaces: []           # interfaces da local-in (ex.: ["port1", "mgmt"])
 fortinet_localin_services: [HTTPS, SSH, PING]
 fortinet_localin_policyid_base: 900       # accept = base + 2i | deny = base + 2i + 1
 fortinet_localin_intf_format: string      # string (FortiOS <= 7.4) | list (7.6+, usa intf_dict)
@@ -48,23 +43,6 @@ fortinet_localin_intf_format: string      # string (FortiOS <= 7.4) | list (7.6+
 # =====================================================================
 #  Estruturas internas (derivadas das variáveis acima) — não editar
 # =====================================================================
-_fgt_fact_selectors:
-  - "user_tacacs+"
-  - user_group
-  - system_admin
-  - firewall_address
-  - firewall_addrgrp
-  - "firewall_local-in-policy"
-  - log.syslogd_setting
-  - log.syslogd_filter
-  - log.syslogd2_setting
-  - log.syslogd2_filter
-  - log.syslogd3_setting
-  - log.syslogd3_filter
-  - log.syslogd4_setting
-  - log.syslogd4_filter
-  - "log.tacacs+accounting_setting"
-
 _fgt_tacacs_opts:
   name: "{{ fortinet_tacacs_name }}"
   port: "{{ fortinet_tacacs_port }}"
@@ -89,31 +67,3 @@ _fgt_localin_opts:
 
 _fgt_use_trusthost: "{{ fortinet_mgmt_acl_enable | bool and fortinet_trusthost_enable | bool }}"
 _fgt_trusthosts: "{{ (mgmt_networks | fortios_trusthosts) if _fgt_use_trusthost | bool else {} }}"
-
-_fgt_expected:
-  tacacs:
-    enabled: "{{ fortinet_tacacs_enable | bool }}"
-    name: "{{ fortinet_tacacs_name }}"
-    servers: "{{ tacacs_servers | default([]) }}"
-    port: "{{ fortinet_tacacs_port }}"
-    authorization: "{{ fortinet_tacacs_authorization }}"
-    group: "{{ fortinet_tacacs_group }}"
-    admin: "{{ fortinet_tacacs_admin_name }}"
-    accprofile: "{{ fortinet_tacacs_accprofile }}"
-    accounting: "{{ fortinet_tacacs_accounting | bool }}"
-  syslog:
-    enabled: "{{ fortinet_syslog_enable | bool }}"
-    servers: "{{ syslog_servers | default([]) }}"
-    opts: "{{ _fgt_syslog_opts }}"
-    severity: "{{ fortinet_syslog_severity }}"
-    disable_unused: "{{ fortinet_syslog_disable_unused | bool }}"
-  acl:
-    enabled: "{{ fortinet_mgmt_acl_enable | bool }}"
-    networks: "{{ mgmt_networks | default([]) }}"
-    addr_prefix: "{{ fortinet_mgmt_addr_prefix }}"
-    addrgrp: "{{ fortinet_mgmt_addrgrp }}"
-    trusthost: "{{ fortinet_trusthost_enable | bool }}"
-    local_admins: "{{ fortinet_trusthost_local_admins }}"
-    localin: "{{ fortinet_localin_enable | bool }}"
-    localin_interfaces: "{{ fortinet_localin_interfaces }}"
-    localin_opts: "{{ _fgt_localin_opts }}"

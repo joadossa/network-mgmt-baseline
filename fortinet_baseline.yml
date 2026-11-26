@@ -2,17 +2,15 @@
 # =====================================================================
 #  IMPLEMENTAÇÃO FortiGate — TACACS+, Syslog e ACL de gerência
 #
-#  1) Auditoria / dry-run (não altera nada; mostra o que mudaria e a conformidade atual):
-#       ansible-playbook fortinet_baseline.yml --check --diff --ask-vault-pass
-#  2) Aplicar (um FortiGate por vez):
-#       ansible-playbook fortinet_baseline.yml --ask-vault-pass
-#  3) Só uma parte:
+#  Ver o que vai mudar (não altera nada):
+#       ansible-playbook fortinet_baseline.yml --check --diff
+#  Aplicar:
+#       ansible-playbook fortinet_baseline.yml
+#  Só uma parte (tacacs | syslog | acl):
 #       ansible-playbook fortinet_baseline.yml --tags syslog
-#       ansible-playbook fortinet_baseline.yml --tags tacacs -l fgt-dc-01
 # =====================================================================
 - name: Fortinet | baseline de gerência (TACACS+, Syslog, ACL)
   hosts: fortigate
   gather_facts: false
-  serial: "{{ fortinet_serial | default(1) }}"
   roles:
     - role: fortinet_mgmt_baseline
