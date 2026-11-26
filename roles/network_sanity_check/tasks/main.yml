@@ -1,17 +1,6 @@
 ---
 # Sanity check SOMENTE LEITURA: ACL de gerência + TACACS+ (Cisco IOS/IOS-XE, NX-OS, Huawei VRP)
 
-- name: Sanity | validar variáveis de entrada
-  ansible.builtin.assert:
-    that:
-      - sanity_platform in ['ios', 'nxos', 'huawei_vrp']
-      - mgmt_networks | netbaseline_invalid_cidrs(4) | length == 0
-      - tacacs_servers | netbaseline_server_ips | length == tacacs_servers | length
-    fail_msg: >-
-      Variáveis inválidas para {{ inventory_hostname }}: confira sanity_platform,
-      mgmt_networks (CIDR IPv4) e tacacs_servers (lista com "ip") em group_vars/all/baseline.yml.
-    quiet: true
-
 - name: "Sanity | carregar regras da plataforma ({{ sanity_platform }})"
   ansible.builtin.include_vars:
     file: "{{ sanity_platform }}.yml"
@@ -31,6 +20,6 @@
       {{ _sanity_raw.results | netbaseline_collect_outputs
          | netbaseline_evaluate(sanity_checks, sanity_config_command) }}
 
-- name: Sanity | não conformidades do equipamento
+- name: Sanity | não conformidades e correção sugerida
   ansible.builtin.debug:
     msg: "{{ sanity_results | netbaseline_host_digest }}"

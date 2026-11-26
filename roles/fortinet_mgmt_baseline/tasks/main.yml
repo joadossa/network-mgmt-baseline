@@ -6,14 +6,30 @@
 - name: "FGT 1 | anti-lockout: o IP do Ansible precisa estar em mgmt_networks"
   ansible.builtin.assert:
     that:
-      - fortinet_controller_ip | netbaseline_ip_in_networks(mgmt_networks)
+      - fortinet_controller_ip | length > 0
+      - fortinet_controller_ip is ansible.utils.in_any_network(mgmt_networks)
     fail_msg: >-
-      fortinet_controller_ip ("{{ fortinet_controller_ip }}") está fora de mgmt_networks.
+      fortinet_controller_ip ("{{ fortinet_controller_ip }}") vazio ou fora de mgmt_networks.
       A local-in policy bloquearia o seu próprio acesso. Nada foi alterado.
     quiet: true
   when: fortinet_mgmt_acl_enable | bool and fortinet_localin_enable | bool
   tags: [always]
 
+- name: "FGT | preparar redes de gerência (nome do objeto e 'ip máscara')"
+  ansible.builtin.set_fact:
+    _fgt_addresses: "{{ _fgt_addresses | default([]) + [{'name': _name, 'subnet': _subnet}] }}"
+    _fgt_members: "{{ _fgt_members | default([]) + [{'name': _name}] }}"
+    _fgt_trusthosts: "{{ _fgt_trusthosts | default({}) | combine({'trusthost' ~ (idx + 1): _subnet}) }}"
+  vars:
+    _net: "{{ item | ansible.utils.ipaddr('network') }}"
+    _name: "{{ fortinet_mgmt_addr_prefix }}{{ _net }}_{{ item | ansible.utils.ipaddr('prefix') }}"
+    _subnet: "{{ _net }} {{ item | ansible.utils.ipaddr('netmask') }}"
+  loop: "{{ mgmt_networks }}"
+  loop_control:
+    index_var: idx
+  tags: [always]
+
+# --------------------------------------------------------------------- 2
 - name: "FGT 2 | objetos de endereço da gerência"
   when: fortinet_mgmt_acl_enable | bool
   tags: [acl]
@@ -24,11 +40,13 @@
         access_token: "{{ fortios_access_token }}"
         state: present
         firewall_address:
-          name: "{{ item | fortios_addr_name(fortinet_mgmt_addr_prefix) }}"
+          name: "{{ item.name }}"
           type: ipmask
-          subnet: "{{ item | fortios_ipmask }}"
+          subnet: "{{ item.subnet }}"
           comment: "Ansible baseline - rede de gerencia"
-      loop: "{{ mgmt_networks }}"
+      loop: "{{ _fgt_addresses }}"
+      loop_control:
+        label: "{{ item.name }}"
 
     - name: FGT ACL | grupo de endereços da gerência
       fortinet.fortios.fortios_firewall_addrgrp:
@@ -37,19 +55,31 @@
         state: present
         firewall_addrgrp:
           name: "{{ fortinet_mgmt_addrgrp }}"
-          member: "{{ mgmt_networks | map('fortios_addr_name', fortinet_mgmt_addr_prefix) | list | netbaseline_name_list }}"
+          member: "{{ _fgt_members }}"
           comment: "Ansible baseline - origens autorizadas a gerenciar o FortiGate"
 
+# --------------------------------------------------------------------- 3
 - name: "FGT 3 | TACACS+"
   when: fortinet_tacacs_enable | bool
   tags: [tacacs]
   block:
-    - name: FGT TACACS+ | servidor(es) TACACS+ (primário/secundário/terciário)
+    - name: FGT TACACS+ | servidores TACACS+ (até 3, na ordem de tacacs_servers)
       fortinet.fortios.fortios_user_tacacsplus:
         vdom: "{{ fortios_vdom }}"
         access_token: "{{ fortios_access_token }}"
         state: present
-        user_tacacsplus: "{{ tacacs_servers | fortios_tacacs_payload(tacacs_key, _fgt_tacacs_opts) }}"
+        user_tacacsplus:
+          name: "{{ fortinet_tacacs_name }}"
+          server: "{{ tacacs_servers[0].ip }}"
+          key: "{{ tacacs_key }}"
+          secondary_server: "{{ (tacacs_servers[1] | default({})).ip | default(omit) }}"
+          secondary_key: "{{ tacacs_key if tacacs_servers | length > 1 else omit }}"
+          tertiary_server: "{{ (tacacs_servers[2] | default({})).ip | default(omit) }}"
+          tertiary_key: "{{ tacacs_key if tacacs_servers | length > 2 else omit }}"
+          port: "{{ fortinet_tacacs_port }}"
+          authen_type: "{{ fortinet_tacacs_authen_type }}"
+          authorization: "{{ fortinet_tacacs_authorization }}"
+          source_ip: "{{ fortinet_tacacs_source_ip | default(omit, true) }}"
 
     - name: FGT TACACS+ | grupo de usuários remoto
       fortinet.fortios.fortios_user_group:
@@ -67,49 +97,70 @@
         vdom: "{{ fortios_vdom }}"
         access_token: "{{ fortios_access_token }}"
         state: present
-        system_admin: "{{ _fgt_admin_base | combine(_fgt_trusthosts) }}"
+        system_admin: "{{ _fgt_admin | combine(_fgt_trusthosts if _use_trusthost else {}) }}"
       vars:
-        _fgt_admin_base:
+        _use_trusthost: "{{ fortinet_mgmt_acl_enable | bool and fortinet_trusthost_enable | bool }}"
+        _fgt_admin:
           name: "{{ fortinet_tacacs_admin_name }}"
           remote_auth: enable
           wildcard: enable
           remote_group: "{{ fortinet_tacacs_group }}"
           accprofile: "{{ fortinet_tacacs_accprofile }}"
           accprofile_override: "{{ fortinet_tacacs_accprofile_override }}"
-          vdom: "{{ fortinet_tacacs_admin_vdoms | netbaseline_name_list }}"
+          vdom: "{{ fortinet_tacacs_admin_vdoms }}"
 
     - name: FGT TACACS+ | accounting de comandos administrativos
       fortinet.fortios.fortios_log_tacacsplusaccounting_setting:
         vdom: "{{ fortios_vdom }}"
         access_token: "{{ fortios_access_token }}"
-        log_tacacsplusaccounting_setting: "{{ tacacs_servers | fortios_tacacs_acct_payload(tacacs_key, _fgt_tacacs_opts) }}"
+        log_tacacsplusaccounting_setting:
+          status: enable
+          server: "{{ tacacs_servers[0].ip }}"
+          server_key: "{{ tacacs_key }}"
+          source_ip: "{{ fortinet_tacacs_source_ip | default(omit, true) }}"
       when: fortinet_tacacs_accounting | bool
 
-- name: "FGT 4 | Syslog (slot N recebe syslog_servers[N-1]; slots sem servidor são desativados)"
+# --------------------------------------------------------------------- 4
+# O FortiOS tem 4 "slots" de syslog, cada um com módulo próprio: o slot N recebe syslog_servers[N-1].
+- name: "FGT 4 | Syslog"
   when: fortinet_syslog_enable | bool
   tags: [syslog]
   block:
-    - name: FGT Syslog | slot 1 (log syslogd setting)
+    - name: FGT Syslog | servidor 1 (log syslogd setting)
       fortinet.fortios.fortios_log_syslogd_setting:
         vdom: "{{ fortios_vdom }}"
         access_token: "{{ fortios_access_token }}"
-        log_syslogd_setting: "{{ syslog_servers | fortios_syslog_payload(1, _fgt_syslog_opts) }}"
+        log_syslogd_setting:
+          status: enable
+          server: "{{ syslog_servers[0].ip }}"
+          port: "{{ syslog_servers[0].port | default(514) }}"
+          mode: "{{ fortinet_syslog_mode }}"
+          facility: "{{ fortinet_syslog_facility }}"
+          format: "{{ fortinet_syslog_format }}"
+          source_ip: "{{ fortinet_syslog_source_ip | default(omit, true) }}"
 
-    - name: FGT Syslog | slot 1 filtro de severidade
+    - name: FGT Syslog | servidor 1 severidade
       fortinet.fortios.fortios_log_syslogd_filter:
         vdom: "{{ fortios_vdom }}"
         access_token: "{{ fortios_access_token }}"
         log_syslogd_filter:
           severity: "{{ fortinet_syslog_severity }}"
 
-    - name: FGT Syslog | slot 2 (log syslogd2 setting)
+    - name: FGT Syslog | servidor 2 (log syslogd2 setting)
       fortinet.fortios.fortios_log_syslogd2_setting:
         vdom: "{{ fortios_vdom }}"
         access_token: "{{ fortios_access_token }}"
-        log_syslogd2_setting: "{{ syslog_servers | fortios_syslog_payload(2, _fgt_syslog_opts) }}"
-      when: syslog_servers | length >= 2 or fortinet_syslog_disable_unused | bool
+        log_syslogd2_setting:
+          status: enable
+          server: "{{ syslog_servers[1].ip }}"
+          port: "{{ syslog_servers[1].port | default(514) }}"
+          mode: "{{ fortinet_syslog_mode }}"
+          facility: "{{ fortinet_syslog_facility }}"
+          format: "{{ fortinet_syslog_format }}"
+          source_ip: "{{ fortinet_syslog_source_ip | default(omit, true) }}"
+      when: syslog_servers | length >= 2
 
-    - name: FGT Syslog | slot 2 filtro de severidade
+    - name: FGT Syslog | servidor 2 severidade
       fortinet.fortios.fortios_log_syslogd2_filter:
         vdom: "{{ fortios_vdom }}"
         access_token: "{{ fortios_access_token }}"
@@ -117,14 +168,21 @@
           severity: "{{ fortinet_syslog_severity }}"
       when: syslog_servers | length >= 2
 
-    - name: FGT Syslog | slot 3 (log syslogd3 setting)
+    - name: FGT Syslog | servidor 3 (log syslogd3 setting)
       fortinet.fortios.fortios_log_syslogd3_setting:
         vdom: "{{ fortios_vdom }}"
         access_token: "{{ fortios_access_token }}"
-        log_syslogd3_setting: "{{ syslog_servers | fortios_syslog_payload(3, _fgt_syslog_opts) }}"
-      when: syslog_servers | length >= 3 or fortinet_syslog_disable_unused | bool
+        log_syslogd3_setting:
+          status: enable
+          server: "{{ syslog_servers[2].ip }}"
+          port: "{{ syslog_servers[2].port | default(514) }}"
+          mode: "{{ fortinet_syslog_mode }}"
+          facility: "{{ fortinet_syslog_facility }}"
+          format: "{{ fortinet_syslog_format }}"
+          source_ip: "{{ fortinet_syslog_source_ip | default(omit, true) }}"
+      when: syslog_servers | length >= 3
 
-    - name: FGT Syslog | slot 3 filtro de severidade
+    - name: FGT Syslog | servidor 3 severidade
       fortinet.fortios.fortios_log_syslogd3_filter:
         vdom: "{{ fortios_vdom }}"
         access_token: "{{ fortios_access_token }}"
@@ -132,14 +190,21 @@
           severity: "{{ fortinet_syslog_severity }}"
       when: syslog_servers | length >= 3
 
-    - name: FGT Syslog | slot 4 (log syslogd4 setting)
+    - name: FGT Syslog | servidor 4 (log syslogd4 setting)
       fortinet.fortios.fortios_log_syslogd4_setting:
         vdom: "{{ fortios_vdom }}"
         access_token: "{{ fortios_access_token }}"
-        log_syslogd4_setting: "{{ syslog_servers | fortios_syslog_payload(4, _fgt_syslog_opts) }}"
-      when: syslog_servers | length >= 4 or fortinet_syslog_disable_unused | bool
+        log_syslogd4_setting:
+          status: enable
+          server: "{{ syslog_servers[3].ip }}"
+          port: "{{ syslog_servers[3].port | default(514) }}"
+          mode: "{{ fortinet_syslog_mode }}"
+          facility: "{{ fortinet_syslog_facility }}"
+          format: "{{ fortinet_syslog_format }}"
+          source_ip: "{{ fortinet_syslog_source_ip | default(omit, true) }}"
+      when: syslog_servers | length >= 4
 
-    - name: FGT Syslog | slot 4 filtro de severidade
+    - name: FGT Syslog | servidor 4 severidade
       fortinet.fortios.fortios_log_syslogd4_filter:
         vdom: "{{ fortios_vdom }}"
         access_token: "{{ fortios_access_token }}"
@@ -147,17 +212,29 @@
           severity: "{{ fortinet_syslog_severity }}"
       when: syslog_servers | length >= 4
 
+# --------------------------------------------------------------------- 5
+# Por interface: accept das redes de gerência (id base) + deny do resto (id base+1).
 - name: "FGT 5 | local-in policy (etapa mais sensível, por último)"
-  when: fortinet_mgmt_acl_enable | bool
+  fortinet.fortios.fortios_firewall_local_in_policy:
+    vdom: "{{ fortios_vdom }}"
+    access_token: "{{ fortios_access_token }}"
+    state: present
+    firewall_local_in_policy:
+      policyid: "{{ (fortinet_localin_policyid_base | int) + idx }}"
+      intf: "{{ item.0 if fortinet_localin_intf_format == 'string' else omit }}"
+      intf_dict: "{{ [{'name': item.0}] if fortinet_localin_intf_format == 'list' else omit }}"
+      srcaddr:
+        - name: "{{ fortinet_mgmt_addrgrp if item.1 == 'accept' else 'all' }}"
+      dstaddr:
+        - name: all
+      action: "{{ item.1 }}"
+      service: "{{ fortinet_localin_services }}"
+      schedule: always
+      status: enable
+      comments: "Ansible: {{ 'permite redes de gerencia' if item.1 == 'accept' else 'bloqueia demais origens' }}"
+  loop: "{{ fortinet_localin_interfaces | product(['accept', 'deny']) | list }}"
+  loop_control:
+    index_var: idx
+    label: "{{ (fortinet_localin_policyid_base | int) + idx }} {{ item.1 }} {{ item.0 }}"
+  when: fortinet_mgmt_acl_enable | bool and fortinet_localin_enable | bool
   tags: [acl]
-  block:
-    - name: FGT ACL | local-in policy (accept das redes de gerência + deny das demais origens)
-      fortinet.fortios.fortios_firewall_local_in_policy:
-        vdom: "{{ fortios_vdom }}"
-        access_token: "{{ fortios_access_token }}"
-        state: present
-        firewall_local_in_policy: "{{ item }}"
-      loop: "{{ fortinet_localin_interfaces | fortios_localin_policies(_fgt_localin_opts) }}"
-      loop_control:
-        label: "{{ item.policyid }} {{ item.action }} {{ item.intf | default(item.intf_dict | default([]) | map(attribute='name') | join(',')) }}"
-      when: fortinet_localin_enable | bool

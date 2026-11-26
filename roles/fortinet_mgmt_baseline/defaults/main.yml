@@ -9,61 +9,33 @@ fortinet_tacacs_name: ISE-TACACS          # config user tacacs+ / edit <nome>
 fortinet_tacacs_port: 49
 fortinet_tacacs_authen_type: auto         # auto | ascii | pap | chap | mschap
 fortinet_tacacs_authorization: enable
-fortinet_tacacs_source_ip: ""
-fortinet_tacacs_interface: ""             # vazio = interface-select-method auto
+fortinet_tacacs_source_ip: ""             # vazio = FortiGate escolhe
 fortinet_tacacs_group: GRP-TACACS-ADMINS  # config user group
 fortinet_tacacs_admin_name: TACACS-ADMINS # config system admin (wildcard)
 fortinet_tacacs_accprofile: super_admin   # perfil padrão do admin remoto
 fortinet_tacacs_accprofile_override: enable   # permite o ISE enviar o perfil (atributo admin_prof)
-fortinet_tacacs_admin_vdoms: [root]
+fortinet_tacacs_admin_vdoms:
+  - name: root
 fortinet_tacacs_accounting: true          # config log tacacs+accounting setting
 
 # ----------------------------------------------------------------- Syslog
 fortinet_syslog_enable: true
 fortinet_syslog_mode: udp                 # udp | legacy-reliable | reliable
-fortinet_syslog_port: 514
 fortinet_syslog_facility: local7
-fortinet_syslog_format: default           # default | csv | cef | rfc5424 | json (conforme versão)
+fortinet_syslog_format: default
 fortinet_syslog_severity: information
-fortinet_syslog_source_ip: ""
-fortinet_syslog_interface: ""
-fortinet_syslog_disable_unused: true      # desativa syslogd2/3/4 não usados
+fortinet_syslog_source_ip: ""             # vazio = FortiGate escolhe
 
 # ------------------------------------------------------- ACL de gerência
 fortinet_mgmt_acl_enable: true
 fortinet_mgmt_addr_prefix: "MGMT_"        # nome dos objetos: MGMT_10.10.0.0_16
 fortinet_mgmt_addrgrp: GRP-MGMT-ACCESS
-fortinet_trusthost_enable: true           # trusthosts no admin TACACS+ (wildcard)
+fortinet_trusthost_enable: true           # trusthosts no admin TACACS+ (máx. 10 redes)
 fortinet_localin_enable: true             # local-in policy: permite mgmt_networks e bloqueia o resto
 fortinet_localin_interfaces: []           # interfaces da local-in (ex.: ["port1", "mgmt"])
-fortinet_localin_services: [HTTPS, SSH, PING]
-fortinet_localin_policyid_base: 900       # accept = base + 2i | deny = base + 2i + 1
-fortinet_localin_intf_format: string      # string (FortiOS <= 7.4) | list (7.6+, usa intf_dict)
-
-# =====================================================================
-#  Estruturas internas (derivadas das variáveis acima) — não editar
-# =====================================================================
-_fgt_tacacs_opts:
-  name: "{{ fortinet_tacacs_name }}"
-  port: "{{ fortinet_tacacs_port }}"
-  authen_type: "{{ fortinet_tacacs_authen_type }}"
-  authorization: "{{ fortinet_tacacs_authorization }}"
-  source_ip: "{{ fortinet_tacacs_source_ip }}"
-  interface: "{{ fortinet_tacacs_interface }}"
-
-_fgt_syslog_opts:
-  mode: "{{ fortinet_syslog_mode }}"
-  port: "{{ fortinet_syslog_port }}"
-  facility: "{{ fortinet_syslog_facility }}"
-  format: "{{ fortinet_syslog_format }}"
-  source_ip: "{{ fortinet_syslog_source_ip }}"
-  interface: "{{ fortinet_syslog_interface }}"
-
-_fgt_localin_opts:
-  policyid_base: "{{ fortinet_localin_policyid_base }}"
-  services: "{{ fortinet_localin_services }}"
-  addrgrp: "{{ fortinet_mgmt_addrgrp }}"
-  intf_format: "{{ fortinet_localin_intf_format }}"
-
-_fgt_use_trusthost: "{{ fortinet_mgmt_acl_enable | bool and fortinet_trusthost_enable | bool }}"
-_fgt_trusthosts: "{{ (mgmt_networks | fortios_trusthosts) if _fgt_use_trusthost | bool else {} }}"
+fortinet_localin_services:
+  - name: HTTPS
+  - name: SSH
+  - name: PING
+fortinet_localin_policyid_base: 900       # accept = base, deny = base + 1 (por interface, de 2 em 2)
+fortinet_localin_intf_format: string      # string (FortiOS <= 7.4) | list (7.6+)

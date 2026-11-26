@@ -25,13 +25,13 @@ inventories/producao/
   group_vars/<plataforma>.yml     # conexão + nomes esperados (grupo AAA, ACL, template HWTACACS...)
 roles/network_sanity_check/       # validação: tasks + regras por fabricante (vars/*.yml)
 roles/fortinet_mgmt_baseline/     # implementação FortiGate: tasks/main.yml (etapas 1 a 5)
-filter_plugins/netbaseline.py     # lógica de avaliação e helpers FortiOS (não precisa editar)
+filter_plugins/netbaseline.py     # engine que aplica as regras da validação (não precisa editar)
 ```
 
 ## Instalação
 
 ```bash
-python3 -m pip install ansible-core ansible-pylibssh
+python3 -m pip install ansible-core ansible-pylibssh netaddr
 ansible-galaxy collection install -r requirements.yml -p ./collections
 cp inventories/producao/group_vars/all/credenciais.yml.example inventories/producao/group_vars/all/credenciais.yml
 ```
@@ -82,7 +82,10 @@ ansible-playbook fortinet_baseline.yml --tags syslog      # só uma parte (tacac
 Saída por equipamento:
 
 ```
-[FAIL][critical] IOS-ACL-005 - Todas as line vty com access-class ACL-MGMT in: 1 de 2 seção(ões) fora do padrão: line vty 5 15
+[FAIL][critical] IOS-ACL-005 - Todas as line vty com access-class ACL-MGMT in: 1 de 2 fora do padrão: line vty 5 15
+  correção:
+    line vty 0 15
+     access-class ACL-MGMT in vrf-also
 ```
 
 ## FortiGate: etapas (`roles/fortinet_mgmt_baseline/tasks/main.yml`)
@@ -121,7 +124,7 @@ basta incluir um item:
      permit __CISCO_SRC__
 ```
 
-Placeholders por item: `__IP__ __CIDR__ __MASK__ __WILDCARD__ __PREFIX__ __CISCO_SRC__
+Placeholders por item: `__IP__ __CIDR__ __MASK__ __WILDCARD__ __CISCO_SRC__
 __HUAWEI_SRC__ __NAME__ __LABEL__`.
 
 **Cisco IOS / IOS-XE** — `show running-config`

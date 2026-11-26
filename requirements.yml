@@ -2,6 +2,7 @@
 # ansible-galaxy collection install -r requirements.yml -p ./collections
 collections:
   - name: ansible.netcommon        # network_cli / httpapi / cli_command
+  - name: ansible.utils            # ipaddr / in_any_network (FortiGate) — precisa do pip netaddr
   - name: cisco.ios                # cliconf/terminal IOS e IOS-XE
   - name: cisco.nxos               # cliconf/terminal NX-OS
   - name: fortinet.fortios         # módulos FortiOS (httpapi)
